@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Kiểm kê kho" />
+<title>Kiểm kê tồn kho — MGV</title>
+
+<!-- SheetJS: đọc/ghi Excel ngay trên máy, không cần server -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- html5-qrcode: quét mã vạch bằng camera; iOS không có API quét gốc nên bắt buộc dùng thư viện JS như thế này -->
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+  :root{
+    --ink:#0f2b34;         /* xanh đậm chủ đạo */
+    --ink-2:#164a54;
+    --paper:#f6f8f8;
+    --card:#ffffff;
+    --line:#dde5e6;
+    --muted:#5c6f74;
+    --primary:#0e7c86;     /* teal hành động */
+    --primary-d:#0a5f67;
+    --ok:#1f9d55;          /* khớp */
+    --warn:#c77700;        /* thiếu */
+    --over:#c0392b;        /* dư */
+    --extra:#6b4fbb;       /* ngoài danh mục */
+    --radius:14px;
+    --shadow:0 1px 2px rgba(15,43,52,.06),0 6px 18px rgba(15,43,52,.06);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--paper);color:var(--ink)}
+  body{padding-bottom:env(safe-area-inset-bottom)}
+  .wrap{max-width:640px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+
+  header{
+    position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;
+    padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;
+    display:flex;align-items:center;gap:10px;
+  }
+  header .dot{width:26px;height:26px;border-radius:7px;background:var(--primary);
+    display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff}
+  header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .step{margin-left:auto;font-size:12px;color:#aecdd0}
+
+  main{flex:1;padding:16px 16px 24px}
+  .view{display:none}
+  .view.active{display:block}
+
+  h2{font-size:15px;margin:0 0 4px;font-weight:650}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px;line-height:1.5}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    width:100%;border:0;border-radius:12px;padding:15px 16px;font-size:16px;font-weight:650;
+    background:var(--primary);color:#fff;cursor:pointer;transition:transform .05s ease}
+  .btn:active{transform:scale(.985)}
+  .btn:disabled{opacity:.45}
+  .btn.sec{background:#eef3f3;color:var(--ink)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  .btn.sm{width:auto;padding:9px 13px;font-size:14px;border-radius:10px}
+  .btn-row{display:flex;gap:10px}
+  .btn-row .btn{flex:1}
+
+  input,select{font-family:inherit}
+  .field{display:flex;gap:8px}
+  .field input{flex:1;border:1px solid var(--line);border-radius:11px;padding:13px 12px;font-size:16px;background:#fff}
+  .field input:focus{outline:2px solid var(--primary);border-color:transparent}
+
+  #drop{border:2px dashed var(--line);border-radius:var(--radius);padding:26px 16px;text-align:center;background:#fff}
+  #drop .big{font-size:15px;font-weight:600}
+  #drop small{color:var(--muted);display:block;margin-top:6px}
+  #fileInput{display:none}
+
+  .stat-line{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
+  .stat-line:first-child{border-top:0}
+  .stat-line b{font-size:18px}
+
+  /* ---- Màn quét ---- */
+  #reader{width:100%;border-radius:var(--radius);overflow:hidden;background:#000;min-height:220px}
+  #reader video{border-radius:var(--radius)}
+  .scan-hint{font-size:12px;color:var(--muted);text-align:center;margin:8px 0 14px}
+  #lastScan{border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;
+    border:1px solid var(--line);background:#fff;min-height:64px;display:flex;align-items:center;gap:12px}
+  #lastScan .badge{min-width:44px;height:44px;border-radius:10px;background:#eef3f3;
+    display:grid;place-items:center;font-weight:750;font-size:18px;color:var(--primary)}
+  #lastScan .meta{flex:1;min-width:0}
+  #lastScan .code{font-weight:700;font-size:15px}
+  #lastScan .name{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #lastScan.flash{animation:flash .5s ease}
+  @keyframes flash{0%{background:#d7f0e6}100%{background:#fff}}
+  #lastScan.unknown .badge{background:#efeaf9;color:var(--extra)}
+
+  .counter-tags{display:flex;gap:8px;margin-bottom:14px}
+  .tag{flex:1;background:#fff;border:1px solid var(--line);border-radius:11px;padding:10px;text-align:center}
+  .tag b{display:block;font-size:20px}
+  .tag span{font-size:11px;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse}
+  .scan-tbl th,.scan-tbl td{padding:10px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
+  .scan-tbl th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .scan-tbl .qty input{width:64px;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:15px;text-align:center}
+  .scan-tbl .nm{max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scan-tbl .rm{color:var(--over);background:none;border:0;font-size:18px;padding:4px 8px;cursor:pointer}
+  .tbl-scroll{max-height:46vh;overflow:auto;-webkit-overflow-scrolling:touch}
+  .empty{color:var(--muted);text-align:center;padding:22px 8px;font-size:13px}
+  .ext-flag{display:inline-block;font-size:10px;color:var(--extra);border:1px solid #ddd3f2;border-radius:6px;padding:1px 5px;margin-left:4px}
+
+  .bottom-bar{position:sticky;bottom:0;background:linear-gradient(to top,var(--paper) 70%,transparent);
+    padding:12px 0 calc(env(safe-area-inset-bottom) + 6px)}
+
+  /* ---- Kết quả ---- */
+  .kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px;cursor:pointer;position:relative}
+  .kpi .n{font-size:30px;font-weight:750;line-height:1}
+  .kpi .l{font-size:13px;color:var(--muted);margin-top:4px}
+  .kpi .bar{height:4px;border-radius:3px;margin-top:10px}
+  .kpi.ok .n{color:var(--ok)} .kpi.ok .bar{background:var(--ok)}
+  .kpi.warn .n{color:var(--warn)} .kpi.warn .bar{background:var(--warn)}
+  .kpi.over .n{color:var(--over)} .kpi.over .bar{background:var(--over)}
+  .kpi.extra .n{color:var(--extra)} .kpi.extra .bar{background:var(--extra)}
+  .kpi.active{outline:2px solid var(--ink)}
+
+  .detail-tbl th,.detail-tbl td{padding:9px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}
+  .detail-tbl th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+  .detail-tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .diff-pos{color:var(--over);font-weight:600}
+  .diff-neg{color:var(--warn);font-weight:600}
+  .pill{font-size:12px;color:var(--muted);margin:0 0 10px}
+
+  .toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);
+    background:var(--ink);color:#fff;padding:10px 16px;border-radius:999px;font-size:13px;
+    opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:90%}
+  .toast.show{opacity:1}
+  .note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="dot">MGV</div>
+    <h1>Kiểm kê tồn kho</h1>
+    <div class="step" id="stepLabel">Bước 1/3</div>
+  </header>
+
+  <main>
+    <!-- ============ VIEW 1: NẠP FILE ============ -->
+    <section class="view active" id="view-import">
+      <h2>1. Nạp file tồn kho</h2>
+      <p class="sub">Chọn file Excel xuất từ Power BI (sheet <b>PBI_Export</b>). App đọc cột <b>Item Code</b>, <b>Item Name</b>, <b>Brand</b> và cộng dồn cột <b>Quantity</b> theo từng mã để ra số lượng lý thuyết. Gộp chung cả V23 / S23 / M23.</p>
+
+      <label id="drop" for="fileInput">
+        <div class="big">Chạm để chọn file .xlsx</div>
+        <small>hoặc kéo–thả file vào đây</small>
+      </label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+
+      <div class="card" id="loadResult" style="display:none">
+        <div class="stat-line"><span>Tên file</span><b id="rFile" style="font-size:14px"></b></div>
+        <div class="stat-line"><span>Số item (mã) đọc được</span><b id="rItems">0</b></div>
+        <div class="stat-line"><span>Tổng số lượng lý thuyết</span><b id="rQty">0</b></div>
+      </div>
+
+      <button class="btn" id="goScan" disabled>Bắt đầu kiểm kê →</button>
+      <p class="note">Dữ liệu tồn kho chỉ nằm trên máy anh, không gửi đi đâu.</p>
+    </section>
+
+    <!-- ============ VIEW 2: QUÉT ============ -->
+    <section class="view" id="view-scan">
+      <h2>2. Quét linh kiện</h2>
+      <p class="sub">Đưa mã vạch (Code 128) vào khung. Mỗi lần quét cộng <b>+1</b>; sửa số ngay trong bảng nếu quét nhầm hoặc 1 gói nhiều cái / số lẻ.</p>
+
+      <div id="reader"></div>
+      <div class="scan-hint" id="scanHint">Chạm “Bật camera” để bắt đầu quét.</div>
+      <div class="btn-row" style="margin-bottom:14px">
+        <button class="btn sm sec" id="camToggle" style="flex:1">Bật camera</button>
+      </div>
+
+      <div id="lastScan"><div class="badge">–</div><div class="meta"><div class="code">Chưa quét mã nào</div><div class="name">Kết quả quét gần nhất hiện ở đây</div></div></div>
+
+      <div class="counter-tags">
+        <div class="tag"><b id="cScans">0</b><span>lượt quét</span></div>
+        <div class="tag"><b id="cItems">0</b><span>mã khác nhau</span></div>
+        <div class="tag"><b id="cUnknown">0</b><span>ngoài danh mục</span></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:650;font-size:13px;margin-bottom:8px">Nhập mã thủ công (part không có mã vạch)</div>
+        <div class="field">
+          <input id="manualCode" inputmode="text" placeholder="Gõ Item Code rồi Enter" autocomplete="off" />
+          <button class="btn sm" id="manualAdd" style="width:auto">+1</button>
+        </div>
+      </div>
+
+      <div class="card" style="padding:12px 12px 4px">
+        <div style="display:flex;align-items:center;margin-bottom:6px">
+          <div style="font-weight:650;font-size:13px">Đã đếm</div>
+          <input id="filterScan" placeholder="Lọc theo mã/tên" style="margin-left:auto;border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:13px;width:150px" />
+        </div>
+        <div class="tbl-scroll">
+          <table class="scan-tbl">
+            <thead><tr><th>Mã / Tên</th><th style="width:74px">SL thực</th><th style="width:34px"></th></tr></thead>
+            <tbody id="scanBody"><tr><td colspan="3" class="empty">Chưa có mã nào được quét.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <div class="btn-row">
+          <button class="btn ghost sm" id="backImport" style="flex:0 0 40%">← Nạp lại file</button>
+          <button class="btn" id="goSummary">Hoàn thành & xem kết quả</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ VIEW 3: KẾT QUẢ ============ -->
+    <section class="view" id="view-summary">
+      <h2>3. Kết quả kiểm kê</h2>
+      <p class="sub" id="sumSub">So sánh số thực đếm với số lý thuyết, gộp theo item code.</p>
+
+      <div class="kpi-grid">
+        <div class="kpi ok" data-cat="ok"><div class="n" id="kOk">0</div><div class="l">Khớp</div><div class="bar"></div></div>
+        <div class="kpi warn" data-cat="short"><div class="n" id="kShort">0</div><div class="l">Thiếu</div><div class="bar"></div></div>
+        <div class="kpi over" data-cat="over"><div class="n" id="kOver">0</div><div class="l">Dư</div><div class="bar"></div></div>
+        <div class="kpi extra" data-cat="extra"><div class="n" id="kExtra">0</div><div class="l">Ngoài danh mục</div><div class="bar"></div></div>
+      </div>
+
+      <div class="card">
+        <p class="pill" id="detailTitle">Chạm một ô ở trên để xem chi tiết.</p>
+        <div class="tbl-scroll" style="max-height:44vh">
+          <table class="detail-tbl">
+            <thead><tr><th>Mã / Tên</th><th class="num">Lý thuyết</th><th class="num">Thực tế</th><th class="num">Lệch</th></tr></thead>
+            <tbody id="detailBody"><tr><td colspan="4" class="empty">—</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <button class="btn" id="exportBtn">⬇︎ Xuất báo cáo Excel</button>
+      <button class="btn ghost" id="backScan" style="margin-top:10px">← Quay lại quét tiếp</button>
+      <p class="note">Báo cáo gồm: Item Code, Item Name, Brand, SL lý thuyết, SL thực tế, Chênh lệch, Trạng thái — mỗi item một dòng.</p>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+   TRẠNG THÁI (state) — mọi thứ chạy phía client, không có server
+   ========================================================================= */
+const theoretical = new Map(); // key chuẩn hoá -> {code, name, brand, qty}
+const counts      = new Map(); // key chuẩn hoá -> {code, name, brand, actual}
+let srcFileName = "";
+let scanEvents = 0;            // tổng số lượt quét (để hiển thị)
+let scanner = null, camOn = false;
+let lastCode = "", lastTime = 0;
+const DEBOUNCE_MS = 1500;      // cùng 1 mã trong 1.5s coi là 1 lượt, tránh đếm lặp khi giữ mã trước camera
+
+/* -------- Tiện ích -------- */
+const $ = s => document.querySelector(s);
+const norm = c => String(c ?? "").trim().toUpperCase();
+function round2(n){ return Math.round((n + Number.EPSILON) * 100) / 100; }
+function approxEq(a,b){ return Math.abs(a-b) < 0.001; }
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),1600); }
+function beep(){
+  try{
+    const Ctx = window.AudioContext||window.webkitAudioContext; if(!Ctx) return;
+    window._ac = window._ac || new Ctx();
+    const o=_ac.createOscillator(), g=_ac.createGain();
+    o.type="sine"; o.frequency.value=880; o.connect(g); g.connect(_ac.destination);
+    g.gain.setValueAtTime(.001,_ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(.4,_ac.currentTime+.01);
+    g.gain.exponentialRampToValueAtTime(.001,_ac.currentTime+.14);
+    o.start(); o.stop(_ac.currentTime+.15);
+  }catch(e){}
+}
+function showView(id){
+  document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
+  $("#view-"+id).classList.add("active");
+  $("#stepLabel").textContent = "Bước " + ({import:1,scan:2,summary:3}[id]) + "/3";
+  window.scrollTo(0,0);
+}
+
+/* =========================================================================
+   BƯỚC 1 — ĐỌC FILE EXCEL
+   ========================================================================= */
+const fileInput = $("#fileInput"), drop = $("#drop");
+fileInput.addEventListener("change", e => { if(e.target.files[0]) readFile(e.target.files[0]); });
+["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor="var(--primary)";}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.style.borderColor="var(--line)";}));
+drop.addEventListener("drop",e=>{ if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]); });
+
+function readFile(file){
+  srcFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:"array"});
+      parseWorkbook(wb);
+    }catch(err){
+      console.error(err);
+      toast("Không đọc được file. Kiểm tra lại định dạng .xlsx");
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseWorkbook(wb){
+  // Ưu tiên sheet PBI_Export, nếu không có thì lấy sheet đầu tiên
+  const sheetName = wb.SheetNames.find(n => n.toLowerCase() === "pbi_export") || wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {header:1, defval:null, raw:true});
+
+  // Tìm dòng tiêu đề: dòng có ô "Item Code"
+  let hIdx = -1;
+  for(let i=0;i<Math.min(rows.length,15);i++){
+    if(rows[i] && rows[i].some(c => String(c).trim().toLowerCase() === "item code")){ hIdx=i; break; }
+  }
+  if(hIdx === -1){ toast('Không tìm thấy cột "Item Code" trong file.'); return; }
+
+  const head = rows[hIdx].map(c => String(c ?? "").trim().toLowerCase());
+  const col = name => head.indexOf(name);
+  const cCode = col("item code"), cName = col("item name"), cBrand = col("brand"), cQty = col("quantity");
+  if(cCode === -1 || cQty === -1){ toast('File thiếu cột "Item Code" hoặc "Quantity".'); return; }
+
+  theoretical.clear();
+  for(let i=hIdx+1;i<rows.length;i++){
+    const r = rows[i]; if(!r) continue;
+    const raw = r[cCode]; if(raw === null || String(raw).trim()==="") continue;
+    const key = norm(raw);
+    const qty = parseFloat(r[cQty]) || 0;
+    if(theoretical.has(key)){
+      theoretical.get(key).qty = round2(theoretical.get(key).qty + qty);   // cộng dồn các batch / kho ảo
+    }else{
+      theoretical.set(key, {
+        code: String(raw).trim(),
+        name: cName>-1 ? String(r[cName] ?? "").trim() : "",
+        brand: cBrand>-1 ? String(r[cBrand] ?? "").trim() : "",
+        qty: round2(qty)
+      });
+    }
+  }
+
+  let totQty=0; theoretical.forEach(v=>totQty=round2(totQty+v.qty));
+  $("#rFile").textContent = srcFileName;
+  $("#rItems").textContent = theoretical.size;
+  $("#rQty").textContent = totQty;
+  $("#loadResult").style.display = "";
+  $("#goScan").disabled = theoretical.size === 0;
+  if(theoretical.size>0) toast("Đã nạp " + theoretical.size + " mã.");
+}
+
+$("#goScan").addEventListener("click", ()=>{ showView("scan"); });
+
+/* =========================================================================
+   BƯỚC 2 — QUÉT & ĐẾM
+   ========================================================================= */
+$("#camToggle").addEventListener("click", ()=> camOn ? stopCam() : startCam());
+
+function startCam(){
+  if(!window.Html5Qrcode){ toast("Chưa tải được thư viện quét. Kiểm tra mạng khi mở lần đầu."); return; }
+  scanner = new Html5Qrcode("reader", {
+    formatsToSupport: [ Html5QrcodeSupportedFormats.CODE_128 ], // chỉ Code 128 -> quét nhạy & ít nhầm hơn
+    verbose: false
+  });
+  scanner.start(
+    { facingMode: "environment" },                 // camera sau
+    { fps: 10, qrbox: { width: 260, height: 150 } },
+    onScan,
+    ()=>{}                                          // bỏ qua lỗi từng khung hình
+  ).then(()=>{
+    camOn = true;
+    $("#camToggle").textContent = "Tắt camera";
+    $("#scanHint").textContent = "Đưa mã vạch vào khung ngang. Nghe “bíp” là đã +1.";
+  }).catch(err=>{
+    console.error(err);
+    toast("Không mở được camera. Cần HTTPS và cấp quyền camera.");
+  });
+}
+function stopCam(){
+  if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); }
+  camOn=false; $("#camToggle").textContent="Bật camera";
+  $("#scanHint").textContent="Camera đã tắt.";
+}
+
+function onScan(decodedText){
+  const now = Date.now();
+  const key = norm(decodedText);
+  if(key === norm(lastCode) && (now - lastTime) < DEBOUNCE_MS) return; // chống đếm lặp
+  lastCode = decodedText; lastTime = now;
+  addCount(decodedText, true);
+  beep();
+  if(navigator.vibrate) navigator.vibrate(35);
+}
+
+// Nhập tay
+$("#manualAdd").addEventListener("click", manualAdd);
+$("#manualCode").addEventListener("keydown", e=>{ if(e.key==="Enter") manualAdd(); });
+function manualAdd(){
+  const v = $("#manualCode").value.trim();
+  if(!v) return;
+  addCount(v, true);
+  $("#manualCode").value = "";
+  $("#manualCode").focus();
+}
+
+// Cộng +1 (hoặc tạo mới) cho một mã
+function addCount(rawCode, plusOne){
+  const key = norm(rawCode);
+  const inTheo = theoretical.has(key);
+  if(!counts.has(key)){
+    const base = inTheo ? theoretical.get(key)
+                        : { code:String(rawCode).trim(), name:"(không có trong tồn kho)", brand:"" };
+    counts.set(key, { code:base.code, name:base.name, brand:base.brand, actual:0 });
+  }
+  const rec = counts.get(key);
+  if(plusOne){ rec.actual = round2(rec.actual + 1); scanEvents++; }
+  flashLast(rec, inTheo);
+  renderCounters(); renderScanList();
+}
+
+function flashLast(rec, inTheo){
+  const el = $("#lastScan");
+  el.className = inTheo ? "flash" : "flash unknown";
+  el.innerHTML =
+    '<div class="badge">'+rec.actual+'</div>'+
+    '<div class="meta"><div class="code">'+esc(rec.code)+ (inTheo?'':' <span class="ext-flag">ngoài DM</span>') +'</div>'+
+    '<div class="name">'+esc(rec.name||"—")+'</div></div>';
+  void el.offsetWidth; // reset animation
+}
+function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderCounters(){
+  let unknown=0; counts.forEach((v,k)=>{ if(!theoretical.has(k)) unknown++; });
+  $("#cScans").textContent = scanEvents;
+  $("#cItems").textContent = counts.size;
+  $("#cUnknown").textContent = unknown;
+}
+
+function renderScanList(){
+  const q = norm($("#filterScan").value);
+  const body = $("#scanBody");
+  const arr = [...counts.entries()].filter(([k,v]) => !q || norm(v.code).includes(q) || norm(v.name).includes(q));
+  if(arr.length===0){ body.innerHTML = '<tr><td colspan="3" class="empty">'+(q?'Không có mã khớp bộ lọc.':'Chưa có mã nào được quét.')+'</td></tr>'; return; }
+  // mã mới đếm nằm trên cùng
+  arr.reverse();
+  body.innerHTML = arr.map(([k,v])=>{
+    const ext = theoretical.has(k) ? "" : ' <span class="ext-flag">ngoài DM</span>';
+    return '<tr data-k="'+esc(k)+'">'+
+      '<td><div style="font-weight:650">'+esc(v.code)+ext+'</div><div class="nm" style="color:var(--muted)">'+esc(v.name||"—")+'</div></td>'+
+      '<td class="qty"><input type="number" step="0.01" min="0" value="'+v.actual+'" inputmode="decimal"></td>'+
+      '<td><button class="rm" title="Xoá">✕</button></td></tr>';
+  }).join("");
+  // gắn sự kiện sửa số & xoá
+  body.querySelectorAll("tr").forEach(tr=>{
+    const k = tr.getAttribute("data-k");
+    tr.querySelector("input").addEventListener("change", e=>{
+      const val = parseFloat(e.target.value);
+      counts.get(k).actual = isNaN(val)?0:round2(val);
+      renderCounters();
+    });
+    tr.querySelector(".rm").addEventListener("click", ()=>{ counts.delete(k); renderCounters(); renderScanList(); });
+  });
+}
+$("#filterScan").addEventListener("input", renderScanList);
+
+$("#backImport").addEventListener("click", ()=>{ stopCam(); showView("import"); });
+$("#goSummary").addEventListener("click", ()=>{ stopCam(); buildSummary(); showView("summary"); });
+
+/* =========================================================================
+   BƯỚC 3 — ĐỐI CHIẾU & BÁO CÁO
+   ========================================================================= */
+let rowsData = []; // dữ liệu đối chiếu gộp theo item code
+function computeRows(){
+  const keys = new Set([...theoretical.keys(), ...counts.keys()]);
+  const out = [];
+  keys.forEach(k=>{
+    const t = theoretical.get(k), c = counts.get(k);
+    const theo = t ? t.qty : 0;
+    const act  = c ? c.actual : 0;
+    const inTheo = !!t;
+    let cat, label;
+    if(!inTheo){ cat="extra"; label="Ngoài danh mục"; }
+    else if(approxEq(act,theo)){ cat="ok"; label="Khớp"; }
+    else if(act < theo){ cat="short"; label="Thiếu"; }
+    else { cat="over"; label="Dư"; }
+    out.push({
+      code:(t||c).code, name:(t||c).name, brand:(t||c).brand||"",
+      theo:round2(theo), actual:round2(act), diff:round2(act-theo), cat, label
+    });
+  });
+  out.sort((a,b)=> a.code.localeCompare(b.code, undefined, {numeric:true}));
+  return out;
+}
+
+function buildSummary(){
+  rowsData = computeRows();
+  const cnt = {ok:0,short:0,over:0,extra:0};
+  rowsData.forEach(r=>cnt[r.cat]++);
+  $("#kOk").textContent=cnt.ok; $("#kShort").textContent=cnt.short;
+  $("#kOver").textContent=cnt.over; $("#kExtra").textContent=cnt.extra;
+  const notScanned = rowsData.filter(r=>r.cat==="short" && r.actual===0).length;
+  $("#sumSub").innerHTML = "Tổng <b>"+rowsData.length+"</b> mã đối chiếu. "+
+    "Trong nhóm Thiếu có <b>"+notScanned+"</b> mã chưa quét lần nào.";
+  showDetail("all");
+}
+
+function showDetail(cat){
+  document.querySelectorAll(".kpi").forEach(k=>k.classList.toggle("active", k.dataset.cat===cat));
+  const list = cat==="all" ? rowsData : rowsData.filter(r=>r.cat===cat);
+  const titleMap = {all:"Tất cả",ok:"Khớp",short:"Thiếu",over:"Dư",extra:"Ngoài danh mục"};
+  $("#detailTitle").textContent = "Chi tiết: "+titleMap[cat]+" ("+list.length+" mã)";
+  const body = $("#detailBody");
+  if(list.length===0){ body.innerHTML='<tr><td colspan="4" class="empty">Không có mã nào.</td></tr>'; return; }
+  body.innerHTML = list.map(r=>{
+    const dc = r.diff>0?'diff-pos':(r.diff<0?'diff-neg':'');
+    const ds = r.diff>0?('+'+r.diff):r.diff;
+    return '<tr><td><div style="font-weight:600">'+esc(r.code)+'</div>'+
+      '<div class="nm" style="color:var(--muted);max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.name||"—")+'</div></td>'+
+      '<td class="num">'+r.theo+'</td><td class="num">'+r.actual+'</td>'+
+      '<td class="num '+dc+'">'+ds+'</td></tr>';
+  }).join("");
+}
+document.querySelectorAll(".kpi").forEach(k=> k.addEventListener("click", ()=>showDetail(k.dataset.cat)) );
+
+$("#backScan").addEventListener("click", ()=> showView("scan"));
+
+// Xuất Excel — mỗi item 1 dòng
+$("#exportBtn").addEventListener("click", ()=>{
+  if(rowsData.length===0){ toast("Chưa có dữ liệu để xuất."); return; }
+  const data = rowsData.map(r=>({
+    "Item Code": r.code,
+    "Item Name": r.name,
+    "Brand": r.brand,
+    "SL lý thuyết": r.theo,
+    "SL thực tế": r.actual,
+    "Chênh lệch": r.diff,
+    "Trạng thái": r.label
+  }));
+  const ws = XLSX.utils.json_to_sheet(data, {header:["Item Code","Item Name","Brand","SL lý thuyết","SL thực tế","Chênh lệch","Trạng thái"]});
+  ws["!cols"] = [{wch:16},{wch:38},{wch:10},{wch:12},{wch:12},{wch:11},{wch:16}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "KiemKe");
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  const fname = "KiemKe_TonKho_"+d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+".xlsx";
+  XLSX.writeFile(wb, fname);
+  toast("Đã tạo "+fname);
+});
+</script>
+</body>
+</html>
