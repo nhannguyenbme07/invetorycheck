@@ -281,9 +281,9 @@
         </div>
       </div>
 
-      <button class="btn" id="exportBtn">⬇︎ Xuất báo cáo Excel</button>
-      <button class="btn ghost" id="backScan" style="margin-top:10px">← Quay lại quét tiếp</button>
-      <p class="note">Báo cáo gồm: Item Code, Item Name, Brand, SL lý thuyết, SL thực tế, Chênh lệch, Trạng thái — mỗi item một dòng.</p>
+      <button class="btn sec" id="backScan">← Quét tiếp mã vạch <span style="opacity:.7;font-weight:500">(giữ nguyên số đã đếm)</span></button>
+      <button class="btn" id="exportBtn" style="margin-top:10px">⬇︎ Xuất báo cáo Excel</button>
+      <p class="note">Bấm “Quét tiếp” để về bước 2 và cộng dồn thêm vào dữ liệu hiện tại; camera sẽ tự bật lại. Báo cáo Excel gồm: Item Code, Item Name, Brand, SL lý thuyết, SL thực tế, Chênh lệch, Trạng thái — mỗi item một dòng.</p>
     </section>
   </main>
 </div>
@@ -648,7 +648,10 @@ function showDetail(cat){
 }
 document.querySelectorAll(".kpi").forEach(k=> k.addEventListener("click", ()=>showDetail(k.dataset.cat)) );
 
-$("#backScan").addEventListener("click", ()=> showView("scan"));
+$("#backScan").addEventListener("click", ()=>{
+  showView("scan");
+  if(!camOn) startCam(); // bật lại camera để quét tiếp ngay; 'counts' vẫn giữ nguyên nên số cũ được cộng dồn
+});
 
 // Xuất Excel — mỗi item 1 dòng
 $("#exportBtn").addEventListener("click", ()=>{
