@@ -121,6 +121,9 @@
   .btn.capture{height:62px;font-size:19px}
   .btn.capture:disabled{background:#cbd6d6;color:#7a8888;opacity:1}
   .committed{text-align:center;font-size:12px;color:var(--muted);margin:9px 0 14px;min-height:16px}
+  .auto-cfg{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--muted)}
+  .auto-cfg input{width:64px;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:15px;text-align:center;color:var(--ink)}
 
   table{width:100%;border-collapse:collapse}
   .scan-tbl th,.scan-tbl td{padding:10px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
@@ -212,6 +215,12 @@
         <button class="btn sm sec" id="camToggle">Bật camera</button>
       </div>
 
+      <div class="auto-cfg" id="autoCfg" style="display:none">
+        <span>Chờ giữa 2 lần đếm cùng 1 mã:</span>
+        <input id="autoDelay" type="number" min="0.5" step="0.5" value="2" inputmode="decimal">
+        <span>giây</span>
+      </div>
+
       <button class="btn capture" id="captureBtn" disabled>Ghi nhận&nbsp; +1</button>
       <div class="committed" id="committedLine">Chưa ghi nhận mã nào.</div>
 
@@ -291,9 +300,9 @@ let srcFileName = "";
 let scanEvents = 0;            // tổng số lượt quét (để hiển thị)
 let scanner = null, camOn = false;
 let lastCode = "", lastTime = 0;
-const DEBOUNCE_MS = 1500;      // dùng cho chế độ Tự động: cùng 1 mã trong 1.5s coi là 1 lượt
+let autoDelayMs = 2000;        // chế độ Tự động: chờ giữa 2 lần đếm CÙNG 1 mã (cấu hình được, mặc định 2s)
 let scanMode = "manual";       // 'manual' = bấm nút để đếm | 'auto' = tự đếm khi thấy mã
-let liveCode = "", liveRec = null, liveTime = 0, freshTimer = null; // "mã đang thấy" trên camera
+let liveCode = "", liveRec = null, liveTime = 0, freshTimer = null, detectedKey = ""; // "mã đang thấy" trên camera
 
 /* -------- Tiện ích -------- */
 const $ = s => document.querySelector(s);
@@ -301,18 +310,27 @@ const norm = c => String(c ?? "").trim().toUpperCase();
 function round2(n){ return Math.round((n + Number.EPSILON) * 100) / 100; }
 function approxEq(a,b){ return Math.abs(a-b) < 0.001; }
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),1600); }
-function beep(){
+// Âm thanh: khởi tạo trong 1 thao tác chạm (iOS chặn phát nhạc ngoài cử chỉ người dùng)
+function initAudio(){
   try{
     const Ctx = window.AudioContext||window.webkitAudioContext; if(!Ctx) return;
     window._ac = window._ac || new Ctx();
-    const o=_ac.createOscillator(), g=_ac.createGain();
-    o.type="sine"; o.frequency.value=880; o.connect(g); g.connect(_ac.destination);
-    g.gain.setValueAtTime(.001,_ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(.4,_ac.currentTime+.01);
-    g.gain.exponentialRampToValueAtTime(.001,_ac.currentTime+.14);
-    o.start(); o.stop(_ac.currentTime+.15);
+    if(_ac.state === "suspended") _ac.resume();
   }catch(e){}
 }
+function tone(freq, dur){
+  try{
+    if(!window._ac) initAudio(); if(!window._ac) return;
+    const o=_ac.createOscillator(), g=_ac.createGain();
+    o.type="sine"; o.frequency.value=freq; o.connect(g); g.connect(_ac.destination);
+    g.gain.setValueAtTime(.0001,_ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(.4,_ac.currentTime+.008);
+    g.gain.exponentialRampToValueAtTime(.0001,_ac.currentTime+dur);
+    o.start(); o.stop(_ac.currentTime+dur+.02);
+  }catch(e){}
+}
+function beepDetect(){ tone(1150, .08); } // tít CAO, ngắn: camera đọc được mã
+function beepCommit(){ tone(760, .12); }  // tít TRẦM: đã đếm +1
 function showView(id){
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   $("#view-"+id).classList.add("active");
@@ -401,10 +419,20 @@ $("#modeSeg").addEventListener("click", e=>{
   scanMode = b.dataset.mode;
   $("#modeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on", x===b));
   $("#captureBtn").style.display = (scanMode==="manual") ? "" : "none";
+  $("#autoCfg").style.display    = (scanMode==="auto")   ? "flex" : "none";
+});
+
+// Cấu hình thời gian chờ của chế độ Tự động
+$("#autoDelay").addEventListener("change", e=>{
+  let s = parseFloat(e.target.value);
+  if(isNaN(s) || s < 0.5) s = 0.5;
+  autoDelayMs = Math.round(s * 1000);
+  e.target.value = s;
 });
 
 function startCam(){
   if(!window.Html5Qrcode){ toast("Chưa tải được thư viện quét. Kiểm tra mạng khi mở lần đầu."); return; }
+  initAudio(); // mở khoá âm thanh trong cử chỉ chạm để tít phát được sau này
   scanner = new Html5Qrcode("reader", {
     formatsToSupport: [ Html5QrcodeSupportedFormats.CODE_128 ], // chỉ Code 128 -> quét nhạy & ít nhầm hơn
     verbose: false
@@ -430,7 +458,7 @@ function stopCam(){
   liveCode=""; liveRec=null; setLive(null);
 }
 
-// Thư viện giải mã được 1 khung -> CHỈ cập nhật "mã đang thấy" (không tự đếm ở chế độ Bấm nút)
+// Thư viện giải mã được 1 khung -> cập nhật "mã đang thấy"; tít CAO khi lần đầu đọc được 1 mã
 function onScan(decodedText){
   liveTime = Date.now();
   const key   = norm(decodedText);
@@ -442,10 +470,13 @@ function onScan(decodedText){
   liveRec  = { code:info.code, name:info.name, inTheo };
   setLive(liveRec);
 
-  if(scanMode === "auto"){ // chế độ cũ: tự đếm, có chống lặp 1.5s
-    if(!(key === norm(lastCode) && (liveTime - lastTime) < DEBOUNCE_MS)){
+  // tít báo "đọc được mã" — chỉ kêu 1 lần cho mỗi mã mới (không kêu liên tục khi giữ yên)
+  if(key !== detectedKey){ detectedKey = key; beepDetect(); }
+
+  if(scanMode === "auto"){ // tự đếm, chờ 'autoDelayMs' giữa 2 lần đếm cùng 1 mã
+    if(!(key === norm(lastCode) && (liveTime - lastTime) < autoDelayMs)){
       lastCode = decodedText; lastTime = liveTime;
-      commitCode(decodedText);
+      commitCode(decodedText, false); // không tít-trầm ở auto vì đã có tít-cao lúc đọc
     }
   }
 }
@@ -468,19 +499,20 @@ function setLive(rec){
 
 // Quá 0.8s không còn thấy mã -> xoá trạng thái, khoá nút (tránh ghi nhầm mã cũ)
 function checkFresh(){
-  if(liveCode && Date.now()-liveTime > 800){ liveCode=""; liveRec=null; setLive(null); }
+  if(liveCode && Date.now()-liveTime > 800){ liveCode=""; liveRec=null; detectedKey=""; setLive(null); }
 }
 
 // NÚT CHỤP: ghi nhận mã đang thấy trong khung
 $("#captureBtn").addEventListener("click", ()=>{
+  initAudio();
   if(!liveCode){ toast("Chưa thấy mã nào trong khung."); return; }
-  commitCode(liveCode);
+  commitCode(liveCode, true); // bấm nút -> tít-trầm xác nhận đã đếm
 });
 
-// Đếm +1 cho 1 mã kèm phản hồi (bíp / rung)
-function commitCode(code){
+// Đếm +1 cho 1 mã kèm phản hồi (rung + tít-trầm nếu withCommitBeep)
+function commitCode(code, withCommitBeep){
   addCount(code, true);
-  beep();
+  if(withCommitBeep) beepCommit();
   if(navigator.vibrate) navigator.vibrate(35);
 }
 
@@ -488,9 +520,10 @@ function commitCode(code){
 $("#manualAdd").addEventListener("click", manualAdd);
 $("#manualCode").addEventListener("keydown", e=>{ if(e.key==="Enter") manualAdd(); });
 function manualAdd(){
+  initAudio();
   const v = $("#manualCode").value.trim();
   if(!v) return;
-  addCount(v, true);
+  commitCode(v, true);
   $("#manualCode").value = "";
   $("#manualCode").focus();
 }
