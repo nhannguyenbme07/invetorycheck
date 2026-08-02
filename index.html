@@ -101,6 +101,27 @@
   .tag b{display:block;font-size:20px}
   .tag span{font-size:11px;color:var(--muted)}
 
+  /* --- Chế độ chụp thủ công --- */
+  .cam-wrap{position:relative;margin-bottom:12px}
+  #liveBanner{position:absolute;left:8px;right:8px;bottom:8px;padding:10px 14px;border-radius:12px;
+    color:#fff;pointer-events:none;transition:background .12s;background:rgba(8,20,24,.6)}
+  #liveBanner .lb-code{font-weight:750;font-size:17px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #liveBanner .lb-name{font-size:12px;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #liveBanner.idle{background:rgba(8,20,24,.5)}
+  #liveBanner.idle .lb-code{opacity:.75;font-weight:600}
+  #liveBanner.ready{background:rgba(14,124,134,.94)}
+  #liveBanner.unknown{background:rgba(107,79,187,.94)}
+  #liveBanner.committed-flash{animation:commitPulse .35s ease}
+  @keyframes commitPulse{0%{background:#1f9d55}100%{background:rgba(14,124,134,.94)}}
+  .cam-controls{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+  .seg{display:flex;background:#eef3f3;border-radius:11px;padding:3px;flex:1}
+  .seg button{flex:1;border:0;background:transparent;padding:9px 8px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);font-family:inherit;cursor:pointer}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  #camToggle{width:auto;flex:0 0 auto}
+  .btn.capture{height:62px;font-size:19px}
+  .btn.capture:disabled{background:#cbd6d6;color:#7a8888;opacity:1}
+  .committed{text-align:center;font-size:12px;color:var(--muted);margin:9px 0 14px;min-height:16px}
+
   table{width:100%;border-collapse:collapse}
   .scan-tbl th,.scan-tbl td{padding:10px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
   .scan-tbl th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
@@ -173,18 +194,29 @@
     <!-- ============ VIEW 2: QUÉT ============ -->
     <section class="view" id="view-scan">
       <h2>2. Quét linh kiện</h2>
-      <p class="sub">Đưa mã vạch (Code 128) vào khung. Mỗi lần quét cộng <b>+1</b>; sửa số ngay trong bảng nếu quét nhầm hoặc 1 gói nhiều cái / số lẻ.</p>
+      <p class="sub">Camera bật liên tục và tự dò mã. Mã đang thấy hiện trên khung — bấm <b>Ghi nhận +1</b> để đếm. Sửa số trong bảng nếu 1 gói nhiều cái / số lẻ.</p>
 
-      <div id="reader"></div>
-      <div class="scan-hint" id="scanHint">Chạm “Bật camera” để bắt đầu quét.</div>
-      <div class="btn-row" style="margin-bottom:14px">
-        <button class="btn sm sec" id="camToggle" style="flex:1">Bật camera</button>
+      <div class="cam-wrap">
+        <div id="reader"></div>
+        <div id="liveBanner" class="idle">
+          <div class="lb-code">Đang tìm mã…</div>
+          <div class="lb-name">Đưa mã vạch vào khung</div>
+        </div>
       </div>
 
-      <div id="lastScan"><div class="badge">–</div><div class="meta"><div class="code">Chưa quét mã nào</div><div class="name">Kết quả quét gần nhất hiện ở đây</div></div></div>
+      <div class="cam-controls">
+        <div class="seg" id="modeSeg">
+          <button type="button" data-mode="manual" class="on">Bấm nút</button>
+          <button type="button" data-mode="auto">Tự động</button>
+        </div>
+        <button class="btn sm sec" id="camToggle">Bật camera</button>
+      </div>
+
+      <button class="btn capture" id="captureBtn" disabled>Ghi nhận&nbsp; +1</button>
+      <div class="committed" id="committedLine">Chưa ghi nhận mã nào.</div>
 
       <div class="counter-tags">
-        <div class="tag"><b id="cScans">0</b><span>lượt quét</span></div>
+        <div class="tag"><b id="cScans">0</b><span>lượt ghi nhận</span></div>
         <div class="tag"><b id="cItems">0</b><span>mã khác nhau</span></div>
         <div class="tag"><b id="cUnknown">0</b><span>ngoài danh mục</span></div>
       </div>
@@ -259,7 +291,9 @@ let srcFileName = "";
 let scanEvents = 0;            // tổng số lượt quét (để hiển thị)
 let scanner = null, camOn = false;
 let lastCode = "", lastTime = 0;
-const DEBOUNCE_MS = 1500;      // cùng 1 mã trong 1.5s coi là 1 lượt, tránh đếm lặp khi giữ mã trước camera
+const DEBOUNCE_MS = 1500;      // dùng cho chế độ Tự động: cùng 1 mã trong 1.5s coi là 1 lượt
+let scanMode = "manual";       // 'manual' = bấm nút để đếm | 'auto' = tự đếm khi thấy mã
+let liveCode = "", liveRec = null, liveTime = 0, freshTimer = null; // "mã đang thấy" trên camera
 
 /* -------- Tiện ích -------- */
 const $ = s => document.querySelector(s);
@@ -361,6 +395,14 @@ $("#goScan").addEventListener("click", ()=>{ showView("scan"); });
    ========================================================================= */
 $("#camToggle").addEventListener("click", ()=> camOn ? stopCam() : startCam());
 
+// Chuyển chế độ: Bấm nút <-> Tự động
+$("#modeSeg").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-mode]"); if(!b) return;
+  scanMode = b.dataset.mode;
+  $("#modeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on", x===b));
+  $("#captureBtn").style.display = (scanMode==="manual") ? "" : "none";
+});
+
 function startCam(){
   if(!window.Html5Qrcode){ toast("Chưa tải được thư viện quét. Kiểm tra mạng khi mở lần đầu."); return; }
   scanner = new Html5Qrcode("reader", {
@@ -369,13 +411,13 @@ function startCam(){
   });
   scanner.start(
     { facingMode: "environment" },                 // camera sau
-    { fps: 10, qrbox: { width: 260, height: 150 } },
+    { fps: 12, qrbox: (w,h)=>({ width: Math.round(Math.min(w*0.9, 340)), height: Math.round(Math.min(h*0.5, 190)) }) },
     onScan,
     ()=>{}                                          // bỏ qua lỗi từng khung hình
   ).then(()=>{
     camOn = true;
     $("#camToggle").textContent = "Tắt camera";
-    $("#scanHint").textContent = "Đưa mã vạch vào khung ngang. Nghe “bíp” là đã +1.";
+    if(!freshTimer) freshTimer = setInterval(checkFresh, 250); // theo dõi mã còn trong khung không
   }).catch(err=>{
     console.error(err);
     toast("Không mở được camera. Cần HTTPS và cấp quyền camera.");
@@ -384,15 +426,60 @@ function startCam(){
 function stopCam(){
   if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); }
   camOn=false; $("#camToggle").textContent="Bật camera";
-  $("#scanHint").textContent="Camera đã tắt.";
+  clearInterval(freshTimer); freshTimer=null;
+  liveCode=""; liveRec=null; setLive(null);
 }
 
+// Thư viện giải mã được 1 khung -> CHỈ cập nhật "mã đang thấy" (không tự đếm ở chế độ Bấm nút)
 function onScan(decodedText){
-  const now = Date.now();
-  const key = norm(decodedText);
-  if(key === norm(lastCode) && (now - lastTime) < DEBOUNCE_MS) return; // chống đếm lặp
-  lastCode = decodedText; lastTime = now;
-  addCount(decodedText, true);
+  liveTime = Date.now();
+  const key   = norm(decodedText);
+  const inTheo = theoretical.has(key);
+  const info  = inTheo ? theoretical.get(key)
+              : (counts.has(key) ? counts.get(key)
+              : { code:String(decodedText).trim(), name:"(không có trong tồn kho)" });
+  liveCode = decodedText;
+  liveRec  = { code:info.code, name:info.name, inTheo };
+  setLive(liveRec);
+
+  if(scanMode === "auto"){ // chế độ cũ: tự đếm, có chống lặp 1.5s
+    if(!(key === norm(lastCode) && (liveTime - lastTime) < DEBOUNCE_MS)){
+      lastCode = decodedText; lastTime = liveTime;
+      commitCode(decodedText);
+    }
+  }
+}
+
+// Hiển thị mã đang thấy trên khung camera + bật/tắt nút Ghi nhận
+function setLive(rec){
+  const el = $("#liveBanner"); if(!el) return;
+  if(!rec){
+    el.className = "idle";
+    el.querySelector(".lb-code").textContent = "Đang tìm mã…";
+    el.querySelector(".lb-name").textContent = "Đưa mã vạch vào khung";
+    $("#captureBtn").disabled = true;
+    return;
+  }
+  el.className = rec.inTheo ? "ready" : "unknown";
+  el.querySelector(".lb-code").textContent = rec.code;
+  el.querySelector(".lb-name").textContent = (rec.inTheo ? "" : "⚠ ngoài danh mục · ") + (rec.name || "—");
+  $("#captureBtn").disabled = false;
+}
+
+// Quá 0.8s không còn thấy mã -> xoá trạng thái, khoá nút (tránh ghi nhầm mã cũ)
+function checkFresh(){
+  if(liveCode && Date.now()-liveTime > 800){ liveCode=""; liveRec=null; setLive(null); }
+}
+
+// NÚT CHỤP: ghi nhận mã đang thấy trong khung
+$("#captureBtn").addEventListener("click", ()=>{
+  if(!liveCode){ toast("Chưa thấy mã nào trong khung."); return; }
+  commitCode(liveCode);
+});
+
+// Đếm +1 cho 1 mã kèm phản hồi (bíp / rung)
+function commitCode(code){
+  addCount(code, true);
   beep();
   if(navigator.vibrate) navigator.vibrate(35);
 }
@@ -419,18 +506,19 @@ function addCount(rawCode, plusOne){
   }
   const rec = counts.get(key);
   if(plusOne){ rec.actual = round2(rec.actual + 1); scanEvents++; }
-  flashLast(rec, inTheo);
+  showCommitted(rec, inTheo);
   renderCounters(); renderScanList();
 }
 
-function flashLast(rec, inTheo){
-  const el = $("#lastScan");
-  el.className = inTheo ? "flash" : "flash unknown";
-  el.innerHTML =
-    '<div class="badge">'+rec.actual+'</div>'+
-    '<div class="meta"><div class="code">'+esc(rec.code)+ (inTheo?'':' <span class="ext-flag">ngoài DM</span>') +'</div>'+
-    '<div class="name">'+esc(rec.name||"—")+'</div></div>';
-  void el.offsetWidth; // reset animation
+function showCommitted(rec, inTheo){
+  const line = $("#committedLine");
+  if(line){
+    line.innerHTML = 'Vừa ghi: <b>'+esc(rec.code)+'</b>'+
+      (inTheo ? '' : ' <span class="ext-flag">ngoài DM</span>')+
+      ' — tổng đã đếm: <b>'+rec.actual+'</b>';
+  }
+  const el = $("#liveBanner"); // nhấp nháy xanh xác nhận
+  if(el){ el.classList.add("committed-flash"); void el.offsetWidth; setTimeout(()=>el.classList.remove("committed-flash"), 360); }
 }
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
