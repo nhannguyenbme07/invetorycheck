@@ -434,7 +434,11 @@ function startCam(){
   if(!window.Html5Qrcode){ toast("Chưa tải được thư viện quét. Kiểm tra mạng khi mở lần đầu."); return; }
   initAudio(); // mở khoá âm thanh trong cử chỉ chạm để tít phát được sau này
   scanner = new Html5Qrcode("reader", {
-    formatsToSupport: [ Html5QrcodeSupportedFormats.CODE_128 ], // chỉ Code 128 -> quét nhạy & ít nhầm hơn
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.CODE_128, // Stago (vd 80031)
+      Html5QrcodeSupportedFormats.CODE_39,  // Sebia (vd 31003265S)
+      Html5QrcodeSupportedFormats.CODE_93   // dự phòng, cùng họ mã tuyến tính
+    ],
     verbose: false
   });
   scanner.start(
