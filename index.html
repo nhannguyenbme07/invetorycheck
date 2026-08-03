@@ -124,6 +124,12 @@
   .auto-cfg{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
     border-radius:11px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--muted)}
   .auto-cfg input{width:64px;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:15px;text-align:center;color:var(--ink)}
+  .cam-adv{display:flex;gap:10px;align-items:center;margin:-2px 0 12px}
+  .cam-adv #torchBtn{width:auto;flex:0 0 auto}
+  .cam-adv #torchBtn.on{background:var(--warn);color:#fff}
+  .cam-adv label{display:flex;align-items:center;gap:8px;flex:1;background:#fff;border:1px solid var(--line);border-radius:11px;padding:8px 12px}
+  .cam-adv label span{font-size:12px;color:var(--muted)}
+  .cam-adv #zoomRange{flex:1;accent-color:var(--primary)}
 
   table{width:100%;border-collapse:collapse}
   .scan-tbl th,.scan-tbl td{padding:10px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
@@ -215,6 +221,14 @@
         <button class="btn sm sec" id="camToggle">Bật camera</button>
       </div>
 
+      <div class="cam-adv" id="camAdv" style="display:none">
+        <button type="button" class="btn sm sec" id="torchBtn" style="display:none">🔦 Đèn</button>
+        <label id="zoomWrap" style="display:none">
+          <span>Zoom</span>
+          <input type="range" id="zoomRange">
+        </label>
+      </div>
+
       <div class="auto-cfg" id="autoCfg" style="display:none">
         <span>Chờ giữa 2 lần đếm cùng 1 mã:</span>
         <input id="autoDelay" type="number" min="0.5" step="0.5" value="2" inputmode="decimal">
@@ -303,6 +317,7 @@ let lastCode = "", lastTime = 0;
 let autoDelayMs = 2000;        // chế độ Tự động: chờ giữa 2 lần đếm CÙNG 1 mã (cấu hình được, mặc định 2s)
 let scanMode = "manual";       // 'manual' = bấm nút để đếm | 'auto' = tự đếm khi thấy mã
 let liveCode = "", liveRec = null, liveTime = 0, freshTimer = null, detectedKey = ""; // "mã đang thấy" trên camera
+let camTrack = null, torchOn = false; // track video để bật đèn / zoom (nếu máy hỗ trợ)
 
 /* -------- Tiện ích -------- */
 const $ = s => document.querySelector(s);
@@ -460,8 +475,10 @@ function startCam(){
     camOn = true;
     $("#camToggle").textContent = "Tắt camera";
     if(!freshTimer) freshTimer = setInterval(checkFresh, 250); // theo dõi mã còn trong khung không
+    initCamControls(); // dò khả năng bật đèn / zoom
     // Ghi lại độ phân giải thực tế lấy được (để anh kiểm tra nếu vẫn khó đọc)
     setTimeout(()=>{
+      initCamControls();
       try{
         const v=document.querySelector("#reader video");
         if(v&&v.videoWidth){ const line=$("#committedLine"); if(line&&/Chưa ghi/.test(line.textContent)) line.textContent="Camera: "+v.videoWidth+"×"+v.videoHeight+" px"; }
@@ -474,7 +491,7 @@ function startCam(){
       scanner.start({ facingMode:"environment" },
         { fps:12, qrbox:(w,h)=>({ width:Math.round(Math.min(w*0.92,380)), height:Math.round(Math.min(h*0.55,220)) }) },
         onScan, ()=>{}
-      ).then(()=>{ camOn=true; $("#camToggle").textContent="Tắt camera"; if(!freshTimer) freshTimer=setInterval(checkFresh,250); toast("Camera mở ở độ phân giải mặc định."); })
+      ).then(()=>{ camOn=true; $("#camToggle").textContent="Tắt camera"; if(!freshTimer) freshTimer=setInterval(checkFresh,250); initCamControls(); toast("Camera mở ở độ phân giải mặc định."); })
        .catch(e2=>{ console.error(e2); toast("Không mở được camera. Cần HTTPS và cấp quyền camera."); });
     }else{
       toast("Không mở được camera. Cần HTTPS và cấp quyền camera.");
@@ -482,11 +499,50 @@ function startCam(){
   });
 }
 function stopCam(){
+  if(camTrack && torchOn){ try{ camTrack.applyConstraints({advanced:[{torch:false}]}); }catch(e){} }
   if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); }
   camOn=false; $("#camToggle").textContent="Bật camera";
   clearInterval(freshTimer); freshTimer=null;
   liveCode=""; liveRec=null; setLive(null);
+  camTrack=null; torchOn=false;
+  $("#camAdv").style.display="none"; $("#torchBtn").classList.remove("on");
 }
+
+// Dò xem camera hỗ trợ bật đèn (torch) / zoom không, rồi hiện điều khiển tương ứng
+function initCamControls(){
+  try{
+    const video = document.querySelector("#reader video");
+    const stream = video && video.srcObject;
+    camTrack = stream ? stream.getVideoTracks()[0] : null;
+    if(!camTrack || !camTrack.getCapabilities) return;
+    const caps = camTrack.getCapabilities();
+    let any = false;
+    if(caps.torch){ $("#torchBtn").style.display=""; any=true; } else { $("#torchBtn").style.display="none"; }
+    if(caps.zoom && (caps.zoom.max||0) > (caps.zoom.min||0)){
+      const z=caps.zoom, r=$("#zoomRange");
+      r.min=z.min; r.max=z.max; r.step=z.step||0.1;
+      const cur=(camTrack.getSettings&&camTrack.getSettings().zoom)||z.min;
+      r.value=cur; $("#zoomWrap").style.display="flex"; any=true;
+    } else { $("#zoomWrap").style.display="none"; }
+    $("#camAdv").style.display = any ? "flex" : "none";
+  }catch(e){ console.error(e); }
+}
+
+// Bật/tắt đèn flash
+$("#torchBtn").addEventListener("click", async ()=>{
+  if(!camTrack) return;
+  torchOn = !torchOn;
+  try{
+    await camTrack.applyConstraints({ advanced:[{ torch: torchOn }] });
+    $("#torchBtn").classList.toggle("on", torchOn);
+  }catch(e){ toast("Máy không bật được đèn."); torchOn=false; $("#torchBtn").classList.remove("on"); }
+});
+
+// Zoom quang/số
+$("#zoomRange").addEventListener("input", async e=>{
+  if(!camTrack) return;
+  try{ await camTrack.applyConstraints({ advanced:[{ zoom: parseFloat(e.target.value) }] }); }catch(err){}
+});
 
 // Thư viện giải mã được 1 khung -> cập nhật "mã đang thấy"; tít CAO khi lần đầu đọc được 1 mã
 function onScan(decodedText){
