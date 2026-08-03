@@ -82,7 +82,8 @@
   .stat-line b{font-size:18px}
 
   /* ---- Màn quét ---- */
-  #reader{width:100%;border-radius:var(--radius);overflow:hidden;background:#000;min-height:220px}
+  #reader{width:100%;border-radius:var(--radius);overflow:hidden;background:#000;height:230px}
+  #reader video{width:100% !important;height:100% !important;object-fit:cover !important}
   #reader video{border-radius:var(--radius)}
   .scan-hint{font-size:12px;color:var(--muted);text-align:center;margin:8px 0 14px}
   #lastScan{border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;
@@ -132,6 +133,10 @@
   .cam-adv #zoomRange{flex:1;accent-color:var(--primary)}
 
   table{width:100%;border-collapse:collapse}
+  .scan-head{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .scan-head .ttl{font-weight:650;font-size:13px;margin-right:auto}
+  .scan-head select,.scan-head input{border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:13px;background:#fff;color:var(--ink);font-family:inherit}
+  .scan-head input{flex:1;min-width:100px;max-width:170px}
   .scan-tbl th,.scan-tbl td{padding:10px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}
   .scan-tbl th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
   .scan-tbl .qty input{width:64px;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:15px;text-align:center}
@@ -189,7 +194,7 @@
   <main>
     <!-- ============ VIEW 1: NẠP FILE ============ -->
     <section class="view active" id="view-import">
-      <div class="ver-badge">Kiểm kê tồn kho MGV · <b>phiên bản 2.1</b></div>
+      <div class="ver-badge">Kiểm kê tồn kho MGV · <b>phiên bản 2.2</b></div>
       <h2>1. Nạp file tồn kho</h2>
       <p class="sub">Chọn file Excel xuất từ Power BI (sheet <b>PBI_Export</b>). App đọc cột <b>Item Code</b>, <b>Item Name</b>, <b>Brand</b> và cộng dồn cột <b>Quantity</b> theo từng mã để ra số lượng lý thuyết. Gộp chung cả V23 / S23 / M23.</p>
 
@@ -262,9 +267,14 @@
       </div>
 
       <div class="card" style="padding:12px 12px 4px">
-        <div style="display:flex;align-items:center;margin-bottom:6px">
-          <div style="font-weight:650;font-size:13px">Đã đếm</div>
-          <input id="filterScan" placeholder="Lọc theo mã/tên" style="margin-left:auto;border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:13px;width:150px" />
+        <div class="scan-head">
+          <div class="ttl">Đã đếm</div>
+          <select id="sortScan" title="Sắp xếp">
+            <option value="recent">Mới quét</option>
+            <option value="code">Theo mã</option>
+            <option value="name">Theo tên</option>
+          </select>
+          <input id="filterScan" placeholder="Lọc mã/tên" />
         </div>
         <div class="tbl-scroll">
           <table class="scan-tbl">
@@ -322,6 +332,8 @@ const theoretical = new Map(); // key chuẩn hoá -> {code, name, brand, qty}
 const counts      = new Map(); // key chuẩn hoá -> {code, name, brand, actual}
 let srcFileName = "";
 let scanEvents = 0;            // tổng số lượt quét (để hiển thị)
+let seqCounter = 0;            // thứ tự quét: mỗi lần đếm +1, để sắp "mới quét trên cùng"
+let scanSort = "recent";       // sắp xếp danh sách đã đếm: recent | code | name
 let scanner = null, camOn = false;
 let lastCode = "", lastTime = 0;
 let autoDelayMs = 2000;        // chế độ Tự động: chờ giữa 2 lần đếm CÙNG 1 mã (cấu hình được, mặc định 2s)
@@ -643,7 +655,7 @@ function addCount(rawCode, plusOne){
     counts.set(key, { code:base.code, name:base.name, brand:base.brand, actual:0 });
   }
   const rec = counts.get(key);
-  if(plusOne){ rec.actual = round2(rec.actual + 1); scanEvents++; }
+  if(plusOne){ rec.actual = round2(rec.actual + 1); scanEvents++; rec.seq = ++seqCounter; }
   showCommitted(rec, inTheo);
   renderCounters(); renderScanList();
 }
@@ -672,8 +684,13 @@ function renderScanList(){
   const body = $("#scanBody");
   const arr = [...counts.entries()].filter(([k,v]) => !q || norm(v.code).includes(q) || norm(v.name).includes(q));
   if(arr.length===0){ body.innerHTML = '<tr><td colspan="3" class="empty">'+(q?'Không có mã khớp bộ lọc.':'Chưa có mã nào được quét.')+'</td></tr>'; return; }
-  // mã mới đếm nằm trên cùng
-  arr.reverse();
+  // Sắp xếp: mới quét (mặc định) / theo mã / theo tên
+  arr.sort((a,b)=>{
+    const va=a[1], vb=b[1];
+    if(scanSort==="code") return String(va.code).localeCompare(String(vb.code), undefined, {numeric:true});
+    if(scanSort==="name") return String(va.name||"").localeCompare(String(vb.name||""), undefined, {sensitivity:"base"});
+    return (vb.seq||0) - (va.seq||0); // recent: mã đếm gần nhất lên trên cùng
+  });
   body.innerHTML = arr.map(([k,v])=>{
     const ext = theoretical.has(k) ? "" : ' <span class="ext-flag">ngoài DM</span>';
     return '<tr data-k="'+esc(k)+'">'+
@@ -693,6 +710,7 @@ function renderScanList(){
   });
 }
 $("#filterScan").addEventListener("input", renderScanList);
+$("#sortScan").addEventListener("change", e=>{ scanSort = e.target.value; renderScanList(); });
 
 $("#backImport").addEventListener("click", ()=>{ stopCam(); showView("import"); });
 $("#goSummary").addEventListener("click", ()=>{ stopCam(); buildSummary(); showView("summary"); });
