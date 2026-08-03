@@ -442,17 +442,43 @@ function startCam(){
     verbose: false
   });
   scanner.start(
-    { facingMode: "environment" },                 // camera sau
-    { fps: 12, qrbox: (w,h)=>({ width: Math.round(Math.min(w*0.9, 340)), height: Math.round(Math.min(h*0.5, 190)) }) },
+    { facingMode: "environment" },                 // camera sau (bị bỏ qua khi có videoConstraints, giữ để tương thích)
+    {
+      fps: 12,
+      qrbox: (w,h)=>({ width: Math.round(Math.min(w*0.92, 380)), height: Math.round(Math.min(h*0.55, 220)) }),
+      // ÉP camera trả khung ĐỘ PHÂN GIẢI CAO + tự lấy nét -> đủ điểm ảnh để đọc mã in nhỏ/thưa
+      videoConstraints: {
+        facingMode: "environment",
+        width:  { min: 1280, ideal: 1920 },
+        height: { min: 720,  ideal: 1080 },
+        advanced: [{ focusMode: "continuous" }]
+      }
+    },
     onScan,
     ()=>{}                                          // bỏ qua lỗi từng khung hình
   ).then(()=>{
     camOn = true;
     $("#camToggle").textContent = "Tắt camera";
     if(!freshTimer) freshTimer = setInterval(checkFresh, 250); // theo dõi mã còn trong khung không
+    // Ghi lại độ phân giải thực tế lấy được (để anh kiểm tra nếu vẫn khó đọc)
+    setTimeout(()=>{
+      try{
+        const v=document.querySelector("#reader video");
+        if(v&&v.videoWidth){ const line=$("#committedLine"); if(line&&/Chưa ghi/.test(line.textContent)) line.textContent="Camera: "+v.videoWidth+"×"+v.videoHeight+" px"; }
+      }catch(e){}
+    }, 600);
   }).catch(err=>{
     console.error(err);
-    toast("Không mở được camera. Cần HTTPS và cấp quyền camera.");
+    // Nếu camera không đáp ứng độ phân giải yêu cầu -> thử lại ở chế độ nới lỏng
+    if(String(err).indexOf("Overconstrained")>-1 || (err&&err.name==="OverconstrainedError")){
+      scanner.start({ facingMode:"environment" },
+        { fps:12, qrbox:(w,h)=>({ width:Math.round(Math.min(w*0.92,380)), height:Math.round(Math.min(h*0.55,220)) }) },
+        onScan, ()=>{}
+      ).then(()=>{ camOn=true; $("#camToggle").textContent="Tắt camera"; if(!freshTimer) freshTimer=setInterval(checkFresh,250); toast("Camera mở ở độ phân giải mặc định."); })
+       .catch(e2=>{ console.error(e2); toast("Không mở được camera. Cần HTTPS và cấp quyền camera."); });
+    }else{
+      toast("Không mở được camera. Cần HTTPS và cấp quyền camera.");
+    }
   });
 }
 function stopCam(){
