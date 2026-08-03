@@ -154,6 +154,11 @@
   .kpi.warn .n{color:var(--warn)} .kpi.warn .bar{background:var(--warn)}
   .kpi.over .n{color:var(--over)} .kpi.over .bar{background:var(--over)}
   .kpi.extra .n{color:var(--extra)} .kpi.extra .bar{background:var(--extra)}
+  .kpi.unscanned .n{color:var(--muted)} .kpi.unscanned .bar{background:#c3cdcd}
+  .kpi.span2{grid-column:1 / -1}
+  .kpi.span2{display:flex;align-items:center;gap:14px}
+  .kpi.span2 .l{margin-top:0}
+  .kpi.span2 .bar{display:none}
   .kpi.active{outline:2px solid var(--ink)}
 
   .detail-tbl th,.detail-tbl td{padding:9px 6px;border-bottom:1px solid var(--line);font-size:13px;text-align:left}
@@ -184,7 +189,7 @@
   <main>
     <!-- ============ VIEW 1: NẠP FILE ============ -->
     <section class="view active" id="view-import">
-      <div class="ver-badge">Kiểm kê tồn kho MGV · <b>phiên bản 2.0</b></div>
+      <div class="ver-badge">Kiểm kê tồn kho MGV · <b>phiên bản 2.1</b></div>
       <h2>1. Nạp file tồn kho</h2>
       <p class="sub">Chọn file Excel xuất từ Power BI (sheet <b>PBI_Export</b>). App đọc cột <b>Item Code</b>, <b>Item Name</b>, <b>Brand</b> và cộng dồn cột <b>Quantity</b> theo từng mã để ra số lượng lý thuyết. Gộp chung cả V23 / S23 / M23.</p>
 
@@ -284,9 +289,10 @@
 
       <div class="kpi-grid">
         <div class="kpi ok" data-cat="ok"><div class="n" id="kOk">0</div><div class="l">Khớp</div><div class="bar"></div></div>
-        <div class="kpi warn" data-cat="short"><div class="n" id="kShort">0</div><div class="l">Thiếu</div><div class="bar"></div></div>
+        <div class="kpi warn" data-cat="short"><div class="n" id="kShort">0</div><div class="l">Thiếu (đã quét)</div><div class="bar"></div></div>
         <div class="kpi over" data-cat="over"><div class="n" id="kOver">0</div><div class="l">Dư</div><div class="bar"></div></div>
         <div class="kpi extra" data-cat="extra"><div class="n" id="kExtra">0</div><div class="l">Ngoài danh mục</div><div class="bar"></div></div>
+        <div class="kpi unscanned span2" data-cat="unscanned"><div class="n" id="kUnscanned">0</div><div class="l">Chưa quét lần nào</div><div class="bar"></div></div>
       </div>
 
       <div class="card">
@@ -705,8 +711,9 @@ function computeRows(){
     const inTheo = !!t;
     let cat, label;
     if(!inTheo){ cat="extra"; label="Ngoài danh mục"; }
+    else if(act===0){ cat="unscanned"; label="Chưa quét"; }   // trong tồn kho nhưng chưa đếm lần nào
     else if(approxEq(act,theo)){ cat="ok"; label="Khớp"; }
-    else if(act < theo){ cat="short"; label="Thiếu"; }
+    else if(act < theo){ cat="short"; label="Thiếu"; }        // ĐÃ quét nhưng còn thiếu
     else { cat="over"; label="Dư"; }
     out.push({
       code:(t||c).code, name:(t||c).name, brand:(t||c).brand||"",
@@ -719,20 +726,20 @@ function computeRows(){
 
 function buildSummary(){
   rowsData = computeRows();
-  const cnt = {ok:0,short:0,over:0,extra:0};
+  const cnt = {ok:0,short:0,over:0,unscanned:0,extra:0};
   rowsData.forEach(r=>cnt[r.cat]++);
   $("#kOk").textContent=cnt.ok; $("#kShort").textContent=cnt.short;
   $("#kOver").textContent=cnt.over; $("#kExtra").textContent=cnt.extra;
-  const notScanned = rowsData.filter(r=>r.cat==="short" && r.actual===0).length;
-  $("#sumSub").innerHTML = "Tổng <b>"+rowsData.length+"</b> mã đối chiếu. "+
-    "Trong nhóm Thiếu có <b>"+notScanned+"</b> mã chưa quét lần nào.";
+  $("#kUnscanned").textContent=cnt.unscanned;
+  const scanned = rowsData.filter(r=>r.actual>0).length;
+  $("#sumSub").innerHTML = "Tổng <b>"+rowsData.length+"</b> mã đối chiếu. Anh đã đếm <b>"+scanned+"</b> mã; còn <b>"+cnt.unscanned+"</b> mã chưa quét.";
   showDetail("all");
 }
 
 function showDetail(cat){
   document.querySelectorAll(".kpi").forEach(k=>k.classList.toggle("active", k.dataset.cat===cat));
   const list = cat==="all" ? rowsData : rowsData.filter(r=>r.cat===cat);
-  const titleMap = {all:"Tất cả",ok:"Khớp",short:"Thiếu",over:"Dư",extra:"Ngoài danh mục"};
+  const titleMap = {all:"Tất cả",ok:"Khớp",short:"Thiếu (đã quét)",over:"Dư",unscanned:"Chưa quét",extra:"Ngoài danh mục"};
   $("#detailTitle").textContent = "Chi tiết: "+titleMap[cat]+" ("+list.length+" mã)";
   const body = $("#detailBody");
   if(list.length===0){ body.innerHTML='<tr><td colspan="4" class="empty">Không có mã nào.</td></tr>'; return; }
