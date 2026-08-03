@@ -168,6 +168,9 @@
     opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:90%}
   .toast.show{opacity:1}
   .note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:10px}
+  .ver-badge{display:inline-block;background:#eef3f3;color:var(--ink-2);border:1px solid var(--line);
+    border-radius:999px;padding:5px 12px;font-size:12px;margin-bottom:14px}
+  .ver-badge b{color:var(--primary)}
 </style>
 </head>
 <body>
@@ -181,6 +184,7 @@
   <main>
     <!-- ============ VIEW 1: NẠP FILE ============ -->
     <section class="view active" id="view-import">
+      <div class="ver-badge">Kiểm kê tồn kho MGV · <b>phiên bản 2.0</b></div>
       <h2>1. Nạp file tồn kho</h2>
       <p class="sub">Chọn file Excel xuất từ Power BI (sheet <b>PBI_Export</b>). App đọc cột <b>Item Code</b>, <b>Item Name</b>, <b>Brand</b> và cộng dồn cột <b>Quantity</b> theo từng mã để ra số lượng lý thuyết. Gộp chung cả V23 / S23 / M23.</p>
 
@@ -215,8 +219,8 @@
 
       <div class="cam-controls">
         <div class="seg" id="modeSeg">
-          <button type="button" data-mode="manual" class="on">Bấm nút</button>
-          <button type="button" data-mode="auto">Tự động</button>
+          <button type="button" data-mode="manual">Bấm nút</button>
+          <button type="button" data-mode="auto" class="on">Tự động</button>
         </div>
         <button class="btn sm sec" id="camToggle">Bật camera</button>
       </div>
@@ -229,13 +233,13 @@
         </label>
       </div>
 
-      <div class="auto-cfg" id="autoCfg" style="display:none">
+      <div class="auto-cfg" id="autoCfg" style="display:flex">
         <span>Chờ giữa 2 lần đếm cùng 1 mã:</span>
         <input id="autoDelay" type="number" min="0.5" step="0.5" value="2" inputmode="decimal">
         <span>giây</span>
       </div>
 
-      <button class="btn capture" id="captureBtn" disabled>Ghi nhận&nbsp; +1</button>
+      <button class="btn capture" id="captureBtn" style="display:none" disabled>Ghi nhận&nbsp; +1</button>
       <div class="committed" id="committedLine">Chưa ghi nhận mã nào.</div>
 
       <div class="counter-tags">
@@ -315,9 +319,10 @@ let scanEvents = 0;            // tổng số lượt quét (để hiển thị)
 let scanner = null, camOn = false;
 let lastCode = "", lastTime = 0;
 let autoDelayMs = 2000;        // chế độ Tự động: chờ giữa 2 lần đếm CÙNG 1 mã (cấu hình được, mặc định 2s)
-let scanMode = "manual";       // 'manual' = bấm nút để đếm | 'auto' = tự đếm khi thấy mã
+let scanMode = "auto";         // MẶC ĐỊNH: Tự động | 'manual' = bấm nút để đếm
 let liveCode = "", liveRec = null, liveTime = 0, freshTimer = null, detectedKey = ""; // "mã đang thấy" trên camera
-let camTrack = null, torchOn = false; // track video để bật đèn / zoom (nếu máy hỗ trợ)
+let camTrack = null, torchOn = false, zoomInit = false; // track video để bật đèn / zoom
+const DEFAULT_ZOOM_FRAC = 0.28; // zoom mặc định ~28% dải zoom (mức đọc được mã vạch giấy)
 
 /* -------- Tiện ích -------- */
 const $ = s => document.querySelector(s);
@@ -421,7 +426,7 @@ function parseWorkbook(wb){
   if(theoretical.size>0) toast("Đã nạp " + theoretical.size + " mã.");
 }
 
-$("#goScan").addEventListener("click", ()=>{ showView("scan"); });
+$("#goScan").addEventListener("click", ()=>{ showView("scan"); if(!camOn) startCam(); });
 
 /* =========================================================================
    BƯỚC 2 — QUÉT & ĐẾM
@@ -504,7 +509,7 @@ function stopCam(){
   camOn=false; $("#camToggle").textContent="Bật camera";
   clearInterval(freshTimer); freshTimer=null;
   liveCode=""; liveRec=null; setLive(null);
-  camTrack=null; torchOn=false;
+  camTrack=null; torchOn=false; zoomInit=false;
   $("#camAdv").style.display="none"; $("#torchBtn").classList.remove("on");
 }
 
@@ -521,8 +526,16 @@ function initCamControls(){
     if(caps.zoom && (caps.zoom.max||0) > (caps.zoom.min||0)){
       const z=caps.zoom, r=$("#zoomRange");
       r.min=z.min; r.max=z.max; r.step=z.step||0.1;
-      const cur=(camTrack.getSettings&&camTrack.getSettings().zoom)||z.min;
-      r.value=cur; $("#zoomWrap").style.display="flex"; any=true;
+      let val;
+      if(!zoomInit){                                   // lần bật camera này: đặt zoom mặc định ~28% (mức đọc được mã giấy)
+        val = z.min + (z.max - z.min)*DEFAULT_ZOOM_FRAC;
+        if(z.step){ val = Math.round(val/z.step)*z.step; }
+        try{ camTrack.applyConstraints({ advanced:[{ zoom: val }] }); }catch(e){}
+        zoomInit = true;
+      } else {
+        val = (camTrack.getSettings&&camTrack.getSettings().zoom)||z.min;
+      }
+      r.value = val; $("#zoomWrap").style.display="flex"; any=true;
     } else { $("#zoomWrap").style.display="none"; }
     $("#camAdv").style.display = any ? "flex" : "none";
   }catch(e){ console.error(e); }
